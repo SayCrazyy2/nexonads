@@ -13,12 +13,48 @@ This update replaces the old string-based group include/exclude system with:
 
 ## Setup
 
-1. Copy the four Python files over the existing project files.
-2. Put your existing bot token in `config.py`.
-3. Set `API_ID` and `API_HASH` from Telegram's developer portal.
-4. Keep the `sessions/` directory writable.
-5. Install/update Aiogram and Telethon.
-6. Start the bot.
+1. Copy `.env.example` to `.env` and fill in your values.
+2. Set `BOT_TOKEN`, `ADMIN_ID`, `API_ID`, and `API_HASH`.
+3. Keep `SESSIONS_DIR` writable.
+4. Install dependencies from `requirements.txt`.
+5. Start the bot with `python main.py`.
+
+### Environment variables
+
+Required:
+
+- `BOT_TOKEN`
+- `ADMIN_ID`
+- `API_ID`
+- `API_HASH`
+
+Optional:
+
+- `SUDO_USERS` (comma-separated user IDs, defaults to `ADMIN_ID`)
+- `DB_PATH` (default `data/bot.db`)
+- `SESSIONS_DIR` (default `sessions`)
+- `DEFAULT_DELAY` (default `1s`)
+- `DEFAULT_LOOP_DELAY` (default `1h`)
+- `DEFAULT_SCHEDULE`
+- `USE_RICH_MARKDOWN` (default `true`)
+
+Railway bucket (S3-compatible) optional persistence:
+
+- `RAILWAY_BUCKET_ENDPOINT`
+- `RAILWAY_BUCKET_NAME`
+- `RAILWAY_BUCKET_ACCESS_KEY`
+- `RAILWAY_BUCKET_SECRET_KEY`
+- `RAILWAY_BUCKET_REGION` (optional)
+- `RAILWAY_BUCKET_PREFIX` (optional)
+
+When all required Railway bucket variables are set, the bot restores the SQLite database and Telethon sessions from the bucket on startup and syncs local changes back on shutdown. If bucket access fails, the bot continues with local storage.
+
+### Railway bucket notes
+
+1. Create a Railway Bucket and copy its S3 endpoint, bucket name, access key, and secret key.
+2. Add the six `RAILWAY_BUCKET_*` variables in your Railway service.
+3. Optionally set `RAILWAY_BUCKET_PREFIX` to isolate environments (for example `prod/nexonads`).
+4. Do not store `.env` in the bucket. Only the SQLite DB artifacts and Telethon session files are synced.
 
 ## Important
 

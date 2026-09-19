@@ -2,3 +2,4 @@ aiogram
 telethon
 rich
 python-dotenv
+boto3
