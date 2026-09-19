@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -27,6 +28,59 @@ am = AccountManager(db, API_ID, API_HASH, SESSIONS_DIR)
 
 MANAGER = "Nexon Ads"
 MANAGER_USERNAME = "@Nexon_Ads_Bot"
+RUNNING_PROCESSES = {}
+_PROCESS_COUNTER = 0
+
+
+def _next_process_id() -> str:
+    global _PROCESS_COUNTER
+    _PROCESS_COUNTER += 1
+    return f"proc{_PROCESS_COUNTER}"
+
+
+def _current_processes():
+    stale = [
+        process_id
+        for process_id, info in RUNNING_PROCESSES.items()
+        if info["task"].done()
+    ]
+
+    for process_id in stale:
+        RUNNING_PROCESSES.pop(process_id, None)
+
+    return sorted(
+        RUNNING_PROCESSES.items(),
+        key=lambda item: item[1]["started_at"],
+    )
+
+
+def _register_process(
+    *,
+    task: asyncio.Task,
+    user_id: int,
+    process_type: str,
+    account_id: int,
+    targets: int,
+    delay: float,
+    loop_delay: float | None = None,
+):
+    process_id = _next_process_id()
+    RUNNING_PROCESSES[process_id] = {
+        "task": task,
+        "user_id": user_id,
+        "type": process_type,
+        "account_id": account_id,
+        "targets": targets,
+        "delay": delay,
+        "loop_delay": loop_delay,
+        "started_at": datetime.now(timezone.utc),
+    }
+
+    def _cleanup(_):
+        RUNNING_PROCESSES.pop(process_id, None)
+
+    task.add_done_callback(_cleanup)
+    return process_id
 
 
 class MenuState(StatesGroup):
@@ -87,7 +141,7 @@ def rich_screen(
             size=2,
         ),
         InputRichBlockParagraph(
-            text=paragraph.replace("**", ""),
+            text=paragraph.replace("**", "").replace("`", ""),
         ),
     ]
     if table is not None:
@@ -141,6 +195,7 @@ def broadcast_message():
         "Send a message to the groups marked as included for a Telegram account.",
         button_rows=(
             button_row(btn("📤 Send Now", "broadcast_now", "success")),
+            button_row(btn("⚙️ Processes", "processes_menu")),
             back_row("menu_main"),
         ),
     )
@@ -591,11 +646,11 @@ async def settings_delay(callback: types.CallbackQuery, state: FSMContext):
             (
                 f"Current delay: {format_duration(current_delay)}\n\n"
                 "Send a custom delay such as:\n"
-                "• `5s` — 5 seconds\n"
-                "• `10m` — 10 minutes\n"
-                "• `2h` — 2 hours\n"
-                "• `1d` — 1 day\n"
-                "• `1h 30m` — 1 hour 30 minutes\n\n"
+                "• 5s — 5 seconds\n"
+                "• 10m — 10 minutes\n"
+                "• 2h — 2 hours\n"
+                "• 1d — 1 day\n"
+                "• 1h 30m — 1 hour 30 minutes\n\n"
                 "The delay is applied between each group."
             ),
             button_rows=(
@@ -623,26 +678,6 @@ async def settings_delay(callback: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(MenuState.schedule)
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("delay:"))
-async def set_delay(callback: types.CallbackQuery):
-    value = float(
-        callback.data.split(":", 1)[1]
-    )
-
-    db.add_broadcast_setting(
-        callback.from_user.id,
-        delay=value,
-    )
-
-    await callback.answer(
-        f"Delay set to {format_duration(value)}"
-    )
-
-    await settings_delay(callback, FSMContext(
-        storage=None
-    ))
 
 
 @router.callback_query(F.data.startswith("delay:"))
@@ -747,11 +782,11 @@ async def process_custom_delay(
                 (
                     f"{exc}\n\n"
                     "Examples:\n"
-                    "`5s`\n"
-                    "`10m`\n"
-                    "`2h`\n"
-                    "`1d`\n"
-                    "`1h 30m`"
+                    "5s\n"
+                    "10m\n"
+                    "2h\n"
+                    "1d\n"
+                    "1h 30m"
                 ),
                 button_rows=back_row("settings_delay"),
             )
@@ -970,6 +1005,112 @@ async def process_broadcast_text(
     )
 
 
+@router.callback_query(F.data == "processes_menu")
+async def processes_menu(callback: types.CallbackQuery):
+    await _show_processes_menu(callback)
+    await callback.answer()
+
+
+async def _show_processes_menu(callback: types.CallbackQuery):
+    processes = _current_processes()
+
+    if not processes:
+        await edit(
+            callback,
+            rich_screen(
+                f"⚙️ {MANAGER} — Processes",
+                "No running broadcasts or loops.",
+                button_rows=back_row("menu_broadcast"),
+            ),
+        )
+        return
+
+    rows = []
+    buttons = []
+
+    for process_id, info in processes:
+        account = db.get_account_by_id(info["account_id"])
+        phone = account[2] if account else f"#{info['account_id']}"
+        rows.append([process_id, info["type"], phone, "Running"])
+        buttons.append(
+            button_row(
+                btn(f"ℹ️ {process_id}", f"process_view:{process_id}", "link"),
+                btn(f"⛔ Stop {process_id}", f"process_stop:{process_id}", "danger"),
+            )
+        )
+
+    await edit(
+        callback,
+        rich_screen(
+            f"⚙️ {MANAGER} — Processes",
+            "Manage running broadcasts and loops.",
+            rich_table(["ID", "Type", "Account", "State"], rows),
+            button_rows=tuple(buttons) + (back_row("menu_broadcast"),),
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("process_view:"))
+async def process_view(callback: types.CallbackQuery):
+    process_id = callback.data.split(":", 1)[1]
+    info = RUNNING_PROCESSES.get(process_id)
+
+    if not info or info["task"].done():
+        RUNNING_PROCESSES.pop(process_id, None)
+        await callback.answer("Process is no longer running.", show_alert=True)
+        await _show_processes_menu(callback)
+        return
+
+    account = db.get_account_by_id(info["account_id"])
+    phone = account[2] if account else f"#{info['account_id']}"
+    elapsed = datetime.now(timezone.utc) - info["started_at"]
+
+    details = (
+        f"ID: {process_id}\n"
+        f"Type: {info['type']}\n"
+        f"Account: {phone}\n"
+        f"Targets: {info['targets']}\n"
+        f"Delay: {format_duration(info['delay'])}\n"
+    )
+
+    if info["loop_delay"] is not None:
+        details += f"Loop interval: {format_duration(info['loop_delay'])}\n"
+
+    details += f"Running for: {format_duration(elapsed.total_seconds())}"
+
+    await edit(
+        callback,
+        rich_screen(
+            f"ℹ️ {MANAGER} — Process Details",
+            details,
+            button_rows=(
+                button_row(
+                    btn("⛔ Stop", f"process_stop:{process_id}", "danger"),
+                    btn("🔄 Refresh", f"process_view:{process_id}"),
+                ),
+                back_row("processes_menu"),
+            ),
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("process_stop:"))
+async def process_stop(callback: types.CallbackQuery):
+    process_id = callback.data.split(":", 1)[1]
+    info = RUNNING_PROCESSES.get(process_id)
+
+    if not info or info["task"].done():
+        RUNNING_PROCESSES.pop(process_id, None)
+        await callback.answer("Process already stopped.", show_alert=True)
+        await _show_processes_menu(callback)
+        return
+
+    info["task"].cancel()
+    await callback.answer(f"Stopping {process_id}...")
+    await _show_processes_menu(callback)
+
+
 @router.callback_query(F.data == "broadcast_once")
 async def broadcast_once(
     callback: types.CallbackQuery,
@@ -1042,8 +1183,13 @@ async def broadcast_once(
                 account_id,
             )
 
-    asyncio.create_task(
-        run_broadcast()
+    process_id = _register_process(
+        task=asyncio.create_task(run_broadcast()),
+        user_id=callback.from_user.id,
+        process_type="Broadcast",
+        account_id=account_id,
+        targets=len(targets),
+        delay=delay,
     )
 
     await callback.answer(
@@ -1056,7 +1202,8 @@ async def broadcast_once(
             f"🔄 {MANAGER} — Broadcast Started",
             (
                 f"Targets: {len(targets)}\n"
-                f"Delay: {format_duration(delay)}\n\n"
+                f"Delay: {format_duration(delay)}\n"
+                f"Process ID: {process_id}\n\n"
                 "The broadcast is running asynchronously."
             ),
             button_rows=(
@@ -1064,6 +1211,10 @@ async def broadcast_once(
                     btn(
                         "📡 Broadcast",
                         "menu_broadcast",
+                    ),
+                    btn(
+                        "⚙️ Processes",
+                        "processes_menu",
                     ),
                     btn(
                         "🏠 Main Menu",
@@ -1093,11 +1244,11 @@ async def broadcast_loop(
                 "Enter how long to wait between complete "
                 "broadcast rounds.\n\n"
                 "Examples:\n"
-                "`30s`\n"
-                "`5m`\n"
-                "`1h`\n"
-                "`1d`\n"
-                "`1h 30m`\n\n"
+                "30s\n"
+                "5m\n"
+                "1h\n"
+                "1d\n"
+                "1h 30m\n\n"
                 "The broadcast will continue until the bot is stopped."
             ),
             button_rows=back_row(
@@ -1158,11 +1309,11 @@ async def process_loop_delay(
                 (
                     f"{exc}\n\n"
                     "Examples:\n"
-                    "`30s`\n"
-                    "`5m`\n"
-                    "`1h`\n"
-                    "`1d`\n"
-                    "`1h 30m`"
+                    "30s\n"
+                    "5m\n"
+                    "1h\n"
+                    "1d\n"
+                    "1h 30m"
                 ),
                 button_rows=back_row(
                     "menu_broadcast"
@@ -1228,8 +1379,14 @@ async def process_loop_delay(
                 account_id,
             )
 
-    asyncio.create_task(
-        run_loop()
+    process_id = _register_process(
+        task=asyncio.create_task(run_loop()),
+        user_id=message.from_user.id,
+        process_type="Loop",
+        account_id=account_id,
+        targets=len(targets),
+        delay=delay,
+        loop_delay=loop_delay,
     )
 
     await message.answer_rich(
@@ -1238,7 +1395,8 @@ async def process_loop_delay(
             (
                 f"Targets: {len(targets)}\n"
                 f"Delay between groups: {format_duration(delay)}\n"
-                f"Loop interval: {format_duration(loop_delay)}\n\n"
+                f"Loop interval: {format_duration(loop_delay)}\n"
+                f"Process ID: {process_id}\n\n"
                 "The broadcast will repeat continuously."
             ),
             button_rows=(
@@ -1246,6 +1404,10 @@ async def process_loop_delay(
                     btn(
                         "📡 Broadcast",
                         "menu_broadcast",
+                    ),
+                    btn(
+                        "⚙️ Processes",
+                        "processes_menu",
                     ),
                     btn(
                         "🏠 Main Menu",

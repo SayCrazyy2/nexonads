@@ -329,6 +329,14 @@ class BotDatabase:
         loop_enabled=0,
         loop_delay=0,
     ):
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO users(user_id, username, added_at)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, None, datetime.utcnow().isoformat()),
+        )
+
         self.conn.execute("""
             INSERT INTO broadcast_settings(
                 user_id,
