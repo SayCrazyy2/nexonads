@@ -1,0 +1,31 @@
+services:
+  - type: worker
+    name: nexonads
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    disk:
+      name: nexonads-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: DB_PATH
+        value: /var/data/bot.db
+      - key: SESSIONS_DIR
+        value: /var/data/sessions
+      - key: SUDO_USERS
+        sync: false
+      - key: DEFAULT_DELAY
+        value: 1s
+      - key: DEFAULT_LOOP_DELAY
+        value: 1h
+      - key: USE_RICH_MARKDOWN
+        value: "true"
