@@ -19,6 +19,17 @@ This update replaces the old string-based group include/exclude system with:
 4. Install dependencies from `requirements.txt`.
 5. Start the bot with `python main.py`.
 
+## Render deployment
+
+The repository includes a `render.yaml` Blueprint for deploying the bot as a
+Render Background Worker. In Render, choose **New > Blueprint**, connect this
+repository, and set the `BOT_TOKEN`, `ADMIN_ID`, `API_ID`, `API_HASH`, and
+`SUDO_USERS` environment variables when prompted.
+
+The Blueprint provisions a persistent disk mounted at `/var/data`, storing the
+SQLite database and Telethon sessions across deploys. The disk is required for
+the bot's local state and is billed according to Render's current pricing.
+
 ### Environment variables
 
 Required:
