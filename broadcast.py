@@ -160,7 +160,8 @@ class BroadcastManager:
             return client
     
         except BaseException:
-            await 
+            await client.disconnect()
+            raise
 
     async def _load_entities(self, client):
         """
