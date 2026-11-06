@@ -124,19 +124,20 @@ def format_duration(seconds: float) -> str:
 
     return " ".join(parts)
 
-
 class BroadcastManager:
     def __init__(
         self,
-        db: BotDatabase,
-        api_id: int,
-        api_hash: str,
+        db,
+        api_id,
+        api_hash,
         sessions_dir="sessions",
+        account_manager=None,
     ):
         self.db = db
         self.api_id = api_id
         self.api_hash = api_hash
         self.sessions_dir = sessions_dir
+        self.account_manager = account_manager
 
     async def _init_client(self, client_key):
         client = TelegramClient(
@@ -148,13 +149,18 @@ class BroadcastManager:
             app_version="1.0.0",
         )
 
-        await client.connect()
+        try:
+            await client.connect()
+        
+            if not await client.is_user_authorized():
+                raise RuntimeError(
+                    "Telegram account is not authorized"
+                )
 
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            raise RuntimeError("Telegram account is not authorized")
-
-        return client
+            return client
+    
+        except BaseException:
+            await 
 
     async def _load_entities(self, client):
         """
@@ -353,7 +359,10 @@ class BroadcastManager:
         if loop_delay < 0:
             raise ValueError("Loop delay cannot be negative")
 
-        client = await self._init_client(client_key)
+        if self.account_manager is None:
+            raise RuntimeError("AccountManager is required")
+
+        client = await self.account_manager.get_client(client_key)
 
         all_results = []
         loop_number = 0
@@ -411,9 +420,6 @@ class BroadcastManager:
                 account_id,
             )
             raise
-
-        finally:
-            await client.disconnect()
 
         logger.info(
             "Broadcast finished: account=%s rounds=%s",

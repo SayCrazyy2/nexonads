@@ -1153,6 +1153,7 @@ async def broadcast_once(
         API_ID,
         API_HASH,
         SESSIONS_DIR,
+        account_manager=am,
     )
 
     async def run_broadcast():
@@ -1348,6 +1349,7 @@ async def process_loop_delay(
         API_ID,
         API_HASH,
         SESSIONS_DIR,
+        account_manager=am,
     )
 
     async def run_loop():
